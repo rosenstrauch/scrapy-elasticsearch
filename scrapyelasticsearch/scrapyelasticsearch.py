@@ -61,11 +61,27 @@ class ElasticSearchPipeline(object):
             from .transportNTLM import TransportNTLM
             ext.es = Elasticsearch(hosts=es_servers,
                                    transport_class=TransportNTLM,
-                                   ntlm_user= ext.settings['ELASTICSEARCH_USERNAME'],
-                                   ntlm_pass= ext.settings['ELASTICSEARCH_PASSWORD'],
-                                   timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT',60))
-        else :
-            ext.es = Elasticsearch(hosts=es_servers, timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
+                                   ntlm_user=ext.settings['ELASTICSEARCH_USERNAME'],
+                                   ntlm_pass=ext.settings['ELASTICSEARCH_PASSWORD'],
+                                   timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
+        elif authType == 'BASIC_AUTH':
+            auth_tuple = (ext.settings.get('ELASTICSEARCH_USERNAME'),
+                          ext.settings.get('ELASTICSEARCH_PASSWORD'))
+
+            use_ssl = ext.settings.getbool('ELASTICSEARCH_USE_SSL')
+            if use_ssl:
+                ext.es = Elasticsearch(hosts=es_servers,
+                                       http_auth=auth_tuple,
+                                       port=443,
+                                       use_ssl=True,
+                                       timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
+            else:
+                ext.es = Elasticsearch(hosts=es_servers,
+                                       http_auth=auth_tuple,
+                                       timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
+        else:
+            ext.es = Elasticsearch(hosts=es_servers,
+                                   timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
         return ext
 
     def get_unique_key(self, unique_key):

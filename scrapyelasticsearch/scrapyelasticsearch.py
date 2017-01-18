@@ -30,9 +30,45 @@ class InvalidSettingsException(Exception):
 
 
 class ElasticSearchPipeline(object):
-    settings = None
-    es = None
-    items_buffer = []
+
+    def __init__(self, settings):
+        self.settings = settings
+
+        self.buffer_size = settings.get('ELASTICSEARCH_BUFFER_LENGTH', 50)
+        self.index = settings.get('ELASTICSEARCH_INDEX')
+        self.doc_type = settings.get('ELASTICSEARCH_TYPE')
+        self.es = self._get_es_instance()
+
+        self.items_buffer = []
+        self.es = self._get_es_instance()
+
+    def _get_es_instance(self):
+        settings = self.settings
+
+        auth_type = settings.get('ELASTICSEARCH_AUTH')
+        hosts = settings.getlist('ELASTICSEARCH_SERVERS')
+
+        if auth_type == 'NTLM':
+            from .transportNTLM import TransportNTLM
+            return Elasticsearch(hosts=hosts,
+                                 transport_class=TransportNTLM,
+                                 ntlm_user=settings.get('ELASTICSEARCH_USERNAME'),
+                                 ntlm_pass=settings.get('ELASTICSEARCH_PASSWORD'),
+                                 timeout=settings.get('ELASTICSEARCH_TIMEOUT', 60))
+
+        elif auth_type == 'BASIC_AUTH':
+            use_ssl = settings.getbool('ELASTICSEARCH_USE_SSL')
+            auth_tuple = (settings.get('ELASTICSEARCH_USERNAME'),
+                          settings.get('ELASTICSEARCH_PASSWORD'))
+            if use_ssl:
+                return Elasticsearch(hosts=hosts,
+                                     http_auth=auth_tuple,
+                                     port=443, use_ssl=True)
+            else:
+                return Elasticsearch(hosts=hosts,
+                                     http_auth=auth_tuple)
+        else:
+            return Elasticsearch(hosts=hosts)
 
     @classmethod
     def validate_settings(cls, settings):
@@ -47,44 +83,10 @@ class ElasticSearchPipeline(object):
 
     @classmethod
     def from_crawler(cls, crawler):
-        ext = cls()
-        ext.settings = crawler.settings
+        return cls(crawler.settings)
 
-        cls.validate_settings(ext.settings)
-
-        es_servers = ext.settings.get('ELASTICSEARCH_SERVERS', 'localhost:9200')
-        es_servers = es_servers if isinstance(es_servers, list) else [es_servers]
-
-        authType = ext.settings['ELASTICSEARCH_AUTH']
-
-        if authType == 'NTLM':
-            from .transportNTLM import TransportNTLM
-            ext.es = Elasticsearch(hosts=es_servers,
-                                   transport_class=TransportNTLM,
-                                   ntlm_user=ext.settings['ELASTICSEARCH_USERNAME'],
-                                   ntlm_pass=ext.settings['ELASTICSEARCH_PASSWORD'],
-                                   timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
-        elif authType == 'BASIC_AUTH':
-            auth_tuple = (ext.settings.get('ELASTICSEARCH_USERNAME'),
-                          ext.settings.get('ELASTICSEARCH_PASSWORD'))
-
-            use_ssl = ext.settings.getbool('ELASTICSEARCH_USE_SSL')
-            if use_ssl:
-                ext.es = Elasticsearch(hosts=es_servers,
-                                       http_auth=auth_tuple,
-                                       port=443,
-                                       use_ssl=True,
-                                       timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
-            else:
-                ext.es = Elasticsearch(hosts=es_servers,
-                                       http_auth=auth_tuple,
-                                       timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
-        else:
-            ext.es = Elasticsearch(hosts=es_servers,
-                                   timeout=ext.settings.get('ELASTICSEARCH_TIMEOUT', 60))
-        return ext
-
-    def get_unique_key(self, unique_key):
+    @staticmethod
+    def get_unique_key(unique_key):
         if isinstance(unique_key, list):
             unique_key = unique_key[0].encode('utf-8')
         elif isinstance(unique_key, string_types):
@@ -95,42 +97,29 @@ class ElasticSearchPipeline(object):
         return unique_key
 
     def index_item(self, item):
-
-        index_name = self.settings['ELASTICSEARCH_INDEX']
-        index_suffix_format = self.settings.get('ELASTICSEARCH_INDEX_DATE_FORMAT', None)
-        index_suffix_key = self.settings.get('ELASTICSEARCH_INDEX_DATE_KEY', None)
-        index_suffix_key_format = self.settings.get('ELASTICSEARCH_INDEX_DATE_KEY_FORMAT', None)
-
-        if index_suffix_format:
-            if index_suffix_key and index_suffix_key_format:
-                dt = datetime.strptime(item[index_suffix_key], index_suffix_key_format)
-            else:
-                dt = datetime.now()
-            index_name += "-" + datetime.strftime(dt,index_suffix_format)
-        elif index_suffix_key:
-            index_name += "-" + index_suffix_key
-
         index_action = {
-            '_index': index_name,
-            '_type': self.settings['ELASTICSEARCH_TYPE'],
-            '_source': dict(item)
+            '_index': self.index,
+            '_type': self.doc_type
         }
 
-        if self.settings['ELASTICSEARCH_UNIQ_KEY'] is not None:
-            item_unique_key = item[self.settings['ELASTICSEARCH_UNIQ_KEY']]
+        unique_key = self.settings['ELASTICSEARCH_UNIQ_KEY']
+        if unique_key is not None:
+            item_unique_key = item[unique_key]
             unique_key = self.get_unique_key(item_unique_key)
+
             item_id = hashlib.sha1(unique_key).hexdigest()
             index_action['_id'] = item_id
             logging.debug('Generated unique key %s' % item_id)
 
-        self.items_buffer.append(index_action)
+        self.items_buffer.append({'index': index_action})
+        self.items_buffer.append(dict(item))
 
-        if len(self.items_buffer) >= self.settings.get('ELASTICSEARCH_BUFFER_LENGTH', 500):
+        if len(self.items_buffer) >= self.buffer_size:
             self.send_items()
             self.items_buffer = []
 
     def send_items(self):
-        helpers.bulk(self.es, self.items_buffer)
+        self.es.bulk(body=self.items_buffer, index=self.index, doc_type=self.doc_type)
 
     def process_item(self, item, spider):
         if isinstance(item, types.GeneratorType) or isinstance(item, list):
@@ -144,4 +133,3 @@ class ElasticSearchPipeline(object):
     def close_spider(self, spider):
         if len(self.items_buffer):
             self.send_items()
-

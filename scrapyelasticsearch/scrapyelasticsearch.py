@@ -16,8 +16,7 @@
 
 """Elastic Search Pipeline for scrappy expanded with support for multiple items"""
 
-from datetime import datetime
-from elasticsearch import Elasticsearch, helpers
+from elasticsearch import Elasticsearch
 from six import string_types
 
 import logging
@@ -74,7 +73,9 @@ class ElasticSearchPipeline(object):
     def validate_settings(cls, settings):
         def validate_setting(setting_key):
             if settings[setting_key] is None:
-                raise InvalidSettingsException('%s is not defined in settings.py' % setting_key)
+                raise InvalidSettingsException(
+                    '%s is not defined in settings.py' % setting_key
+                )
 
         required_settings = {'ELASTICSEARCH_INDEX', 'ELASTICSEARCH_TYPE'}
 
@@ -114,7 +115,7 @@ class ElasticSearchPipeline(object):
         self.items_buffer.append({'index': index_action})
         self.items_buffer.append(dict(item))
 
-        if len(self.items_buffer) >= self.buffer_size:
+        if len(self.items_buffer) >= 2 * self.buffer_size:
             self.send_items()
             self.items_buffer = []
 
@@ -127,7 +128,8 @@ class ElasticSearchPipeline(object):
                 self.process_item(each, spider)
         else:
             self.index_item(item)
-            logging.debug('Item sent to Elastic Search %s' % self.settings['ELASTICSEARCH_INDEX'])
+            logging.debug('Item sent to Elastic Search %s'
+                          % self.settings['ELASTICSEARCH_INDEX'])
             return item
 
     def close_spider(self, spider):

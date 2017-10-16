@@ -12,7 +12,7 @@ pyasn1-modules==0.0.8
 pycparser==2.14
 pyOpenSSL==16.0.0
 queuelib==1.4.2
-Scrapy==1.0.5
+Scrapy==1.4
 service-identity==16.0.0
 six==1.10.0
 Twisted==16.1.1

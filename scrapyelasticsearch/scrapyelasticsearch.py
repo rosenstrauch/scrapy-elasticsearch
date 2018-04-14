@@ -83,11 +83,51 @@ class ElasticSearchPipeline(object):
             validate_setting(required_setting)
 
     @classmethod
-    def from_crawler(cls, crawler):
-        return cls(crawler.settings)
+    def init_es_client(cls, crawler_settings):
+        auth_type = crawler_settings.get('ELASTICSEARCH_AUTH')
+        es_timeout = crawler_settings.get('ELASTICSEARCH_TIMEOUT',60)
 
-    @staticmethod
-    def get_unique_key(unique_key):
+        es_servers = crawler_settings.get('ELASTICSEARCH_SERVERS', 'localhost:9200')
+        es_servers = es_servers if isinstance(es_servers, list) else [es_servers]
+
+        if auth_type == 'NTLM':
+            from .transportNTLM import TransportNTLM
+            es = Elasticsearch(hosts=es_servers,
+                               transport_class=TransportNTLM,
+                               ntlm_user= crawler_settings['ELASTICSEARCH_USERNAME'],
+                               ntlm_pass= crawler_settings['ELASTICSEARCH_PASSWORD'],
+                               timeout=es_timeout)
+
+            return es
+
+        es_settings = dict()
+        es_settings['hosts'] = es_servers
+        es_settings['timeout'] = es_timeout
+
+        if 'ELASTICSEARCH_USERNAME' in crawler_settings and 'ELASTICSEARCH_PASSWORD' in crawler_settings:
+            es_settings['http_auth'] = (crawler_settings['ELASTICSEARCH_USERNAME'], crawler_settings['ELASTICSEARCH_PASSWORD'])
+
+        if 'ELASTICSEARCH_CA' in crawler_settings:
+            import certifi
+            es_settings['port'] = 443
+            es_settings['use_ssl'] = True
+            es_settings['ca_certs'] = crawler_settings['ELASTICSEARCH_CA']['CA_CERT']
+            es_settings['client_key'] = crawler_settings['ELASTICSEARCH_CA']['CLIENT_KEY']
+            es_settings['client_cert'] = crawler_settings['ELASTICSEARCH_CA']['CLIENT_CERT']
+
+        es = Elasticsearch(**es_settings)
+        return es
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        ext = cls()
+        ext.settings = crawler.settings
+
+        cls.validate_settings(ext.settings)
+        ext.es = cls.init_es_client(crawler.settings)
+        return ext
+
+    def process_unique_key(self, unique_key):
         if isinstance(unique_key, list):
             unique_key = unique_key[0].encode('utf-8')
         elif isinstance(unique_key, string_types):
@@ -97,18 +137,23 @@ class ElasticSearchPipeline(object):
 
         return unique_key
 
+    def get_id(self, item):
+        item_unique_key = item[self.settings['ELASTICSEARCH_UNIQ_KEY']]
+        if isinstance(item_unique_key, list):
+            item_unique_key = '-'.join(item_unique_key)
+
+        unique_key = self.process_unique_key(item_unique_key)
+        item_id = hashlib.sha1(unique_key).hexdigest()
+        return item_id
+
     def index_item(self, item):
         index_action = {
             '_index': self.index,
             '_type': self.doc_type
         }
 
-        unique_key = self.settings['ELASTICSEARCH_UNIQ_KEY']
-        if unique_key is not None:
-            item_unique_key = item[unique_key]
-            unique_key = self.get_unique_key(item_unique_key)
-
-            item_id = hashlib.sha1(unique_key).hexdigest()
+        if self.settings['ELASTICSEARCH_UNIQ_KEY'] is not None:
+            item_id = self.get_id(item)
             index_action['_id'] = item_id
             logging.debug('Generated unique key %s' % item_id)
 

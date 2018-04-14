@@ -1,3 +1,1 @@
-__version__ = '0.8.8'
-
-from .scrapyelasticsearch import  ElasticSearchPipeline
+__version__ = '0.9.1'

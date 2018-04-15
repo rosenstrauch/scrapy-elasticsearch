@@ -120,12 +120,7 @@ class ElasticSearchPipeline(object):
 
     @classmethod
     def from_crawler(cls, crawler):
-        ext = cls()
-        ext.settings = crawler.settings
-
-        cls.validate_settings(ext.settings)
-        ext.es = cls.init_es_client(crawler.settings)
-        return ext
+        return cls(crawler.settings)
 
     def process_unique_key(self, unique_key):
         if isinstance(unique_key, list):
